@@ -102,6 +102,7 @@ fn main() {
             });
             if now.elapsed() > Duration::from_secs(60) {
                 now = Instant::now();
+                i = 0;
                 let est = dur.unwrap() * 1073741824 / cpus as u32;
                 println!("Estimated {}", durationfmt::to_string(est));
             }
