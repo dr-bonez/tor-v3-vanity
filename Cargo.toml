@@ -1,0 +1,23 @@
+[package]
+name = "tor-v3-vanity"
+version = "0.1.0"
+authors = ["Aiden McClelland <me@drbonez.dev>"]
+edition = "2018"
+
+[[bin]]
+name = "t3v"
+test = false
+bench = false
+path = "src/main.rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+base32 = "0.4.0"
+clap = "2.33.1"
+crossbeam-channel = "0.4.3"
+durationfmt = "0.1.1"
+ed25519-dalek = "1.0.0-pre.4"
+num_cpus = "1.13.0"
+rand = "0.7.3"
+sha3 = "0.9.1"
