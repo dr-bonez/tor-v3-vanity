@@ -95,11 +95,11 @@ fn main() {
         let mut now = Instant::now();
         loop {
             let i_dur = speed_recv.recv().unwrap();
-            i += 1;
             dur = Some(match dur {
-                Some(dur) => (dur + i_dur) / i,
+                Some(dur) => (dur * i + i_dur) / (1 + i),
                 None => i_dur,
             });
+            i += 1;
             if now.elapsed() > Duration::from_secs(60) {
                 now = Instant::now();
                 i = 0;
