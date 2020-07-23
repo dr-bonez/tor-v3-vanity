@@ -13,11 +13,13 @@ path = "src/main.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-base32 = "0.4.0"
+accel = "0.3.1"
 clap = "2.33.1"
 crossbeam-channel = "0.4.3"
+data-encoding = "2.2.1"
 durationfmt = "0.1.1"
-ed25519-dalek = "1.0.0-pre.4"
+ed25519-compact = "0.1.6"
 num_cpus = "1.13.0"
 rand = "0.7.3"
 sha3 = "0.9.1"
+zkp-u256 = "0.1.1"
