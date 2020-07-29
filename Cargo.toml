@@ -29,7 +29,7 @@ num_cpus = "1.13.0"
 rand = "0.7.3"
 rustacuda = "0.1.2"
 sha3 = "0.9.1"
-tor-v3-vanity-core = { version = "0.1.0", path = "core" }
+tor-v3-vanity-core = "0.1.0"
 
 [build-dependencies]
 ptx-builder = "0.5"
