@@ -12,7 +12,9 @@ I will make this configurable soon.
 - [Install Rust](https://rustup.rs)
 - [Install Cuda](https://developer.nvidia.com/cuda-downloads)
 - `cargo install ptx-linker`
-- `cargo install tor-v3-vanity`
+- `git clone https://github.com/dr-bonez/tor-v3-vanity`
+- `cd tor-v3-vanity`
+- `cargo install --path .`
 
 ## Usage
 
