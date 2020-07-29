@@ -688,6 +688,8 @@ dependencies = [
 [[package]]
 name = "tor-v3-vanity-core"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "135b9d5fcac59631eb67b60a80f8dc8368df2e939c2133e5fbe0480965fc068f"
 dependencies = [
  "byteorder",
  "ed25519-compact",
