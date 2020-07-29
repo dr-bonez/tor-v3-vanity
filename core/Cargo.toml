@@ -3,6 +3,8 @@ name = "tor-v3-vanity-core"
 version = "0.1.0"
 authors = ["Aiden McClelland <me@drbonez.dev>"]
 edition = "2018"
+description = "Needed for https://crates.io/crate/tor-v3-vanity"
+license = "MIT"
 
 [build]
 target = "nvptx64-nvidia-cuda"
