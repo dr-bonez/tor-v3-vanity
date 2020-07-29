@@ -1,0 +1,14 @@
+[package]
+name = "tor-v3-vanity-core"
+version = "0.1.0"
+authors = ["Aiden McClelland <me@drbonez.dev>"]
+edition = "2018"
+
+[build]
+target = "nvptx64-nvidia-cuda"
+
+[dependencies]
+byteorder = { version = "1.3.4", default-features = false }
+ed25519-compact =  { version = "0.1.6", default-features = false }
+rustacuda_core = "0.1"
+rustacuda_derive = "0.1"
