@@ -170,7 +170,7 @@ fn main() {
             if let Some(seed) = res {
                 send.send(seed).unwrap();
             } else {
-                send_tries.try_send(GPU_BLOCKS * GPU_THREADS).unwrap();
+                send_tries.send(GPU_BLOCKS * GPU_THREADS).unwrap();
             }
         }
     });
@@ -194,7 +194,6 @@ fn main() {
                 "Running for {} / {} (expected).",
                 dur_pretty, expected_dur_pretty
             );
-            println!("Progress {:.2}%.", progress * 100.0);
         }
     });
 
@@ -202,12 +201,13 @@ fn main() {
         use std::io::Write;
 
         let seed = recv.recv().unwrap();
-        let kp = ed25519_compact::KeyPair::from_seed(ed25519_compact::Seed::new(seed));
-        let onion = pubkey_to_onion(&*kp.pk);
+        let esk: ed25519_dalek::ExpandedSecretKey = (&ed25519_dalek::SecretKey::from_bytes(&seed).unwrap()).into();
+        let pk: ed25519_dalek::PublicKey = (&esk).into();
+        let onion = pubkey_to_onion(pk.as_bytes());
         println!("{}", onion);
         let mut f = std::fs::File::create(dst.join(onion)).unwrap();
         f.write_all(FILE_PREFIX).unwrap();
-        f.write_all(&*kp.sk).unwrap();
+        f.write_all(&esk.to_bytes()).unwrap();
         f.flush().unwrap();
     }
 }
