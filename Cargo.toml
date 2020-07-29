@@ -3,6 +3,12 @@ name = "tor-v3-vanity"
 version = "0.1.0"
 authors = ["Aiden McClelland <me@drbonez.dev>"]
 edition = "2018"
+description = "A TOR v3 vanity url generator designed to run on an nvidia GPU."
+license = "MIT"
+repository = "https://github.com/dr-bonez/tor-v3-vanity"
+documentation = "http://docs.rs/tor-v3-vanity"
+readme = "README.md"
+keywords = ["tor", "v3", "vanity", "gpu", "cuda"]
 
 [[bin]]
 name = "t3v"
@@ -23,7 +29,7 @@ num_cpus = "1.13.0"
 rand = "0.7.3"
 rustacuda = "0.1.2"
 sha3 = "0.9.1"
-tor-v3-vanity-core = { path = "core" }
+tor-v3-vanity-core = { version = "0.1.0", path = "core" }
 
 [build-dependencies]
 ptx-builder = "0.5"
