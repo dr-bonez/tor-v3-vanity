@@ -153,7 +153,8 @@ fn main() {
         .into_boxed_slice(),
     );
     let mut last_byte_idx = 5 * prefix.len() / 8 - 1;
-    let last_byte_mask = (-1_i8 as u8) ^ ((1 << (5 * prefix.len() % 8)) - 1);
+    let n_bits = (5 * prefix.len()) % 8;
+    let last_byte_mask = ((1 << n_bits) - 1) << (8 - n_bits);
     if last_byte_mask > 0 {
         last_byte_idx += 1;
     }
