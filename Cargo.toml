@@ -9,6 +9,7 @@ repository = "https://github.com/dr-bonez/tor-v3-vanity"
 documentation = "http://docs.rs/tor-v3-vanity"
 readme = "README.md"
 keywords = ["tor", "v3", "vanity", "gpu", "cuda"]
+include = ["src/**/*", "Cargo.toml", "core/**/*"]
 
 [[bin]]
 name = "t3v"
