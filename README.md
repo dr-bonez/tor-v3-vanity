@@ -28,8 +28,8 @@ I will make this configurable soon.
 ## Bench
 On my 1070ti, I get the following time estimates:
 
-Prefix Length | Time
-5 | 7 minutes
-6 | 3.5 hours
-7 | 5.5 days
-8 | 23 weeks
+| Prefix Length | Time |
+| 5 | 7 minutes |
+| 6 | 3.5 hours |
+| 7 | 5.5 days |
+| 8 | 23 weeks |
