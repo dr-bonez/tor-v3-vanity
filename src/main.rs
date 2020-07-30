@@ -53,7 +53,10 @@ pub fn pubkey_to_onion(pubkey: &[u8; 32]) -> String {
     )
 }
 
-pub fn cuda_try(seed: &[u8; 32], byte_prefix: &[u8], last_byte_idx: usize, last_byte_mask: u8) -> Result<Option<[u8; 32]>, Error> {
+pub fn cuda_try(
+    seed: &[u8; 32],
+    prefixes: &[String],
+) -> Result<Vec<[u8; 32]>, Error> {
     use rustacuda::launch;
     use rustacuda::memory::DeviceBox;
     use rustacuda::prelude::*;
@@ -75,24 +78,21 @@ pub fn cuda_try(seed: &[u8; 32], byte_prefix: &[u8], last_byte_idx: usize, last_
 
     // Move seed and prefix to device
     let mut gpu_seed = DeviceBuffer::from_slice(seed)?;
-    let mut gpu_uc_prefix = DeviceBuffer::from_slice(byte_prefix)?;
+
+    let mut byte_prefixes: Vec<_> = prefixes
+            .into_iter()
+            .map(|a| byte_prefix_from_str(&a))
+            .collect();
+    let mut gpu_byte_prefixes = DeviceBuffer::from_slice(&byte_prefixes)?;
 
     // Create output
-    let mut out = [0; 32];
-    let mut gpu_out = DeviceBuffer::from_slice(&out)?;
-
-    let mut success = false;
-    let mut gpu_success = DeviceBox::new(&success)?;
+    
 
     // Crate parameters
     let mut params = DeviceBox::new(&core::KernelParams {
         seed: gpu_seed.as_device_ptr(),
-        byte_prefix: gpu_uc_prefix.as_device_ptr(),
-        byte_prefix_len: gpu_uc_prefix.len(),
-        last_byte_idx: last_byte_idx,
-        last_byte_mask: last_byte_mask,
-        out: gpu_out.as_device_ptr(),
-        success: gpu_success.as_device_ptr(),
+        byte_prefixes: gpu_byte_prefixes.as_device_ptr(),
+        byte_prefixes_len: gpu_byte_prefixes.len(),
     })?;
 
     // Do rendering
@@ -106,14 +106,53 @@ pub fn cuda_try(seed: &[u8; 32], byte_prefix: &[u8], last_byte_idx: usize, last_
     // The kernel launch is asynchronous, so we wait for the kernel to finish executing
     stream.synchronize()?;
 
-    // Copy the result back to the host
-    gpu_success.copy_to(&mut success)?;
-    if success {
-        gpu_out.copy_to(&mut out)?;
-        Ok(Some(out))
-    } else {
-        Ok(None)
+    gpu_byte_prefixes.copy_to(&mut byte_prefixes)?;
+
+    Ok(byte_prefixes.into_iter().filter_map(|prefix| {
+        let _gpu_prefix = unsafe { DeviceBuffer::from_raw_parts(prefix.byte_prefix, prefix.byte_prefix_len) };
+        let gpu_success = unsafe { DeviceBox::from_device(prefix.success) };
+        let gpu_out = unsafe { DeviceBuffer::from_raw_parts(prefix.out, 32) };
+        let mut success = false;
+        gpu_success.copy_to(&mut success).unwrap();
+        if success {
+            let mut out = [0; 32];
+            gpu_out.copy_to(&mut out).unwrap();
+            Some(out)
+        } else {
+            None
+        }
+    }).collect())
+}
+
+pub fn byte_prefix_from_str(s: &str) -> core::BytePrefix {
+    let byte_prefix = base32::decode(
+        base32::Alphabet::RFC4648 { padding: false },
+        &format!("{}aa", s),
+    )
+    .expect("prefix must be base32");
+    let mut last_byte_idx = 5 * s.len() / 8 - 1;
+    let n_bits = (5 * s.len()) % 8;
+    let last_byte_mask = ((1 << n_bits) - 1) << (8 - n_bits);
+    if last_byte_mask > 0 {
+        last_byte_idx += 1;
     }
+    let mut gpu_byte_prefix = rustacuda::memory::DeviceBuffer::from_slice(&byte_prefix).unwrap();
+    let out = [0; 32];
+    let mut gpu_out = rustacuda::memory::DeviceBuffer::from_slice(&out).unwrap();
+
+    let success = false;
+    let gpu_success = rustacuda::memory::DeviceBox::new(&success).unwrap();
+    let res = core::BytePrefix {
+        byte_prefix: gpu_byte_prefix.as_device_ptr(),
+        byte_prefix_len: gpu_byte_prefix.len(),
+        last_byte_idx,
+        last_byte_mask,
+        out: gpu_out.as_device_ptr(),
+        success: rustacuda::memory::DeviceBox::into_device(gpu_success),
+    };
+    std::mem::forget(gpu_byte_prefix);
+    std::mem::forget(gpu_out);
+    res
 }
 
 const FILE_PREFIX: &'static [u8] = b"== ed25519v1-secret: type0 ==\0\0\0";
@@ -123,6 +162,8 @@ fn main() {
         .arg(
             clap::Arg::with_name("PREFIX")
                 .required(true)
+                .multiple(true)
+                .value_delimiter(",")
                 .help("Desired prefix"),
         )
         .arg(
@@ -134,30 +175,16 @@ fn main() {
         );
     let matches = app.get_matches();
 
-    let prefix = matches
-        .value_of("PREFIX")
+    let max_len = matches
+        .values_of("PREFIX")
         .unwrap()
-        .to_string()
-        .into_boxed_str();
+        .fold(0, |acc, x| std::cmp::max(acc, x.len()));
+    let prefixes: Vec<_> = matches.values_of("PREFIX").unwrap().map(|a| a.to_string()).collect();
     let dst = matches
         .value_of("dst")
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap());
     assert!(dst.is_dir(), "dst must be a directory");
-    let byte_prefix: &'static [u8] = Box::leak(
-        base32::decode(
-            base32::Alphabet::RFC4648 { padding: false },
-            &format!("{}aa", prefix),
-        )
-        .expect("prefix must be base32")
-        .into_boxed_slice(),
-    );
-    let mut last_byte_idx = 5 * prefix.len() / 8 - 1;
-    let n_bits = (5 * prefix.len()) % 8;
-    let last_byte_mask = ((1 << n_bits) - 1) << (8 - n_bits);
-    if last_byte_mask > 0 {
-        last_byte_idx += 1;
-    }
 
     let (send, recv) = crossbeam_channel::unbounded();
     let (send_tries, recv_tries) = crossbeam_channel::bounded(1);
@@ -167,19 +194,18 @@ fn main() {
         let mut csprng = rand::thread_rng();
         loop {
             csprng.fill_bytes(&mut seed);
-            let res = cuda_try(&seed, byte_prefix, last_byte_idx, last_byte_mask).unwrap();
-            if let Some(seed) = res {
+            let res = cuda_try(&seed, &prefixes).unwrap();
+            for seed in res {
                 send.send(seed).unwrap();
-            } else {
-                send_tries.send(GPU_BLOCKS * GPU_THREADS).unwrap();
             }
+            send_tries.send(GPU_BLOCKS * GPU_THREADS).unwrap();
         }
     });
 
     std::thread::spawn(move || {
         let now = Instant::now();
         let mut tries = 0_f64;
-        let expected = 2_f64.powi(5 * prefix.len() as i32);
+        let expected = 2_f64.powi(5 * max_len as i32);
         loop {
             tries += recv_tries.recv().unwrap() as f64;
             let dur = now.elapsed().as_secs_f64();
@@ -202,7 +228,8 @@ fn main() {
         use std::io::Write;
 
         let seed = recv.recv().unwrap();
-        let esk: ed25519_dalek::ExpandedSecretKey = (&ed25519_dalek::SecretKey::from_bytes(&seed).unwrap()).into();
+        let esk: ed25519_dalek::ExpandedSecretKey =
+            (&ed25519_dalek::SecretKey::from_bytes(&seed).unwrap()).into();
         let pk: ed25519_dalek::PublicKey = (&esk).into();
         let onion = pubkey_to_onion(pk.as_bytes());
         println!("{}", onion);

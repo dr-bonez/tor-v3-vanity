@@ -34,15 +34,15 @@ pub extern "ptx-kernel" fn render(params_ptr: *mut KernelParams) {
     let s = ed25519_compact::Seed::new(cur_seed);
     let kp = ed25519_compact::KeyPair::from_seed(s);
 
-    let byte_prefix =
-        unsafe { core::slice::from_raw_parts(params.byte_prefix.as_raw(), params.byte_prefix_len) };
-    if kp.pk.starts_with(&byte_prefix[..params.last_byte_idx])
-        && kp.pk[params.last_byte_idx] & params.last_byte_mask == byte_prefix[params.last_byte_idx]
-    {
-        let out = unsafe { core::slice::from_raw_parts_mut(params.out.as_raw_mut(), 32) };
-        out.clone_from_slice(&cur_seed);
-        let success = unsafe { &mut *params.success.as_raw_mut() };
-        *success = true;
+    let byte_prefixes =
+        unsafe { core::slice::from_raw_parts_mut(params.byte_prefixes.as_raw_mut(), params.byte_prefixes_len) };
+    for byte_prefix in byte_prefixes {
+        if byte_prefix.matches(&*kp.pk) {
+            let out = unsafe { core::slice::from_raw_parts_mut(byte_prefix.out.as_raw_mut(), 32) };
+            out.clone_from_slice(&cur_seed);
+            let success = unsafe { &mut *byte_prefix.success.as_raw_mut() };
+            *success = true;
+        }
     }
 }
 
