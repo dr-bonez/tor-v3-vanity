@@ -24,3 +24,12 @@ I will make this configurable soon.
   - `t3v --dst mykeys/ myprefix`
 - Use the resulting file as your `hs_ed25519_secret_key`
   - `cat mykeys/myprefixwhatever.onion > /var/lib/tor/hidden_service/hs_ed25519_secret_key`
+
+## Bench
+On my 1070ti, I get the following time estimates:
+
+Prefix Length | Time
+5 | 7 minutes
+6 | 3.5 hours
+7 | 5.5 days
+8 | 23 weeks
