@@ -162,10 +162,11 @@ pub fn cuda_try_loop<Rng: rand::Rng + rand::CryptoRng>(
 
         gpu_byte_prefixes.copy_to(&mut byte_prefixes)?;
 
-        for prefix in &byte_prefixes_owned {
+        for prefix in &mut byte_prefixes_owned {
             let mut success = false;
             prefix.success.copy_to(&mut success)?;
             if success {
+                prefix.success.copy_from(&false)?;
                 let mut out = [0; 32];
                 prefix.out.copy_to(&mut out)?;
                 sender.send(out)?;
