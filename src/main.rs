@@ -98,8 +98,8 @@ impl BytePrefixOwned {
     }
 }
 
-pub fn cuda_try_loop(
-    seed: &[u8; 32],
+pub fn cuda_try_loop<Rng: rand::Rng + rand::CryptoRng>(
+    csprng: &mut Rng,
     prefixes: &[String],
     sender: crossbeam_channel::Sender<[u8; 32]>,
     tries_sender: crossbeam_channel::Sender<u64>,
@@ -124,7 +124,8 @@ pub fn cuda_try_loop(
     let stream = Stream::new(StreamFlags::NON_BLOCKING, None)?;
 
     // Move seed and prefix to device
-    let mut gpu_seed = DeviceBuffer::from_slice(seed)?;
+    let mut seed = [0; 32];
+    let mut gpu_seed = DeviceBuffer::from_slice(&seed)?;
 
     let mut byte_prefixes_owned: Vec<_> = prefixes
         .into_iter()
@@ -150,6 +151,8 @@ pub fn cuda_try_loop(
     let blocks = GPU_BLOCKS as u32;
 
     loop {
+        csprng.fill_bytes(&mut seed);
+        gpu_seed.copy_from(&seed)?;
         unsafe {
             launch!(kernel.render<<<blocks, threads, 0, stream>>>(params.as_device_ptr()))?;
         }
@@ -211,11 +214,8 @@ fn main() {
     let (send, recv) = crossbeam_channel::unbounded();
     let (send_tries, recv_tries) = crossbeam_channel::bounded(1);
     std::thread::spawn(move || {
-        use rand::RngCore;
-        let mut seed = [0; 32];
         let mut csprng = rand::thread_rng();
-        csprng.fill_bytes(&mut seed);
-        cuda_try_loop(&seed, &prefixes, send, send_tries).unwrap();
+        cuda_try_loop(&mut csprng, &prefixes, send, send_tries).unwrap();
     });
 
     std::thread::spawn(move || {
