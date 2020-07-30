@@ -53,10 +53,57 @@ pub fn pubkey_to_onion(pubkey: &[u8; 32]) -> String {
     )
 }
 
-pub fn cuda_try(
+pub struct BytePrefixOwned {
+    pub byte_prefix: rustacuda::memory::DeviceBuffer<u8>,
+    pub last_byte_idx: usize,
+    pub last_byte_mask: u8,
+    pub out: rustacuda::memory::DeviceBuffer<u8>,
+    pub success: rustacuda::memory::DeviceBox<bool>,
+}
+impl BytePrefixOwned {
+    pub fn from_str(s: &str) -> Self {
+        let byte_prefix = base32::decode(
+            base32::Alphabet::RFC4648 { padding: false },
+            &format!("{}aa", s),
+        )
+        .expect("prefix must be base32");
+        let mut last_byte_idx = 5 * s.len() / 8 - 1;
+        let n_bits = (5 * s.len()) % 8;
+        let last_byte_mask = ((1 << n_bits) - 1) << (8 - n_bits);
+        if last_byte_mask > 0 {
+            last_byte_idx += 1;
+        }
+        let gpu_byte_prefix = rustacuda::memory::DeviceBuffer::from_slice(&byte_prefix).unwrap();
+        let out = [0; 32];
+        let gpu_out = rustacuda::memory::DeviceBuffer::from_slice(&out).unwrap();
+        let success = false;
+        let gpu_success = rustacuda::memory::DeviceBox::new(&success).unwrap();
+        BytePrefixOwned {
+            byte_prefix: gpu_byte_prefix,
+            last_byte_idx,
+            last_byte_mask,
+            out: gpu_out,
+            success: gpu_success,
+        }
+    }
+    pub fn as_byte_prefix(&mut self) -> core::BytePrefix {
+        core::BytePrefix {
+            byte_prefix: self.byte_prefix.as_device_ptr(),
+            byte_prefix_len: self.byte_prefix.len(),
+            last_byte_idx: self.last_byte_idx,
+            last_byte_mask: self.last_byte_mask,
+            out: self.out.as_device_ptr(),
+            success: self.success.as_device_ptr(),
+        }
+    }
+}
+
+pub fn cuda_try_loop(
     seed: &[u8; 32],
     prefixes: &[String],
-) -> Result<Vec<[u8; 32]>, Error> {
+    sender: crossbeam_channel::Sender<[u8; 32]>,
+    tries_sender: crossbeam_channel::Sender<u64>,
+) -> Result<(), Error> {
     use rustacuda::launch;
     use rustacuda::memory::DeviceBox;
     use rustacuda::prelude::*;
@@ -79,14 +126,17 @@ pub fn cuda_try(
     // Move seed and prefix to device
     let mut gpu_seed = DeviceBuffer::from_slice(seed)?;
 
-    let mut byte_prefixes: Vec<_> = prefixes
-            .into_iter()
-            .map(|a| byte_prefix_from_str(&a))
-            .collect();
+    let mut byte_prefixes_owned: Vec<_> = prefixes
+        .into_iter()
+        .map(|a| BytePrefixOwned::from_str(&a))
+        .collect();
+    let mut byte_prefixes: Vec<_> = byte_prefixes_owned
+        .iter_mut()
+        .map(|bp| bp.as_byte_prefix())
+        .collect();
     let mut gpu_byte_prefixes = DeviceBuffer::from_slice(&byte_prefixes)?;
 
     // Create output
-    
 
     // Crate parameters
     let mut params = DeviceBox::new(&core::KernelParams {
@@ -99,60 +149,28 @@ pub fn cuda_try(
     let threads = GPU_THREADS as u32;
     let blocks = GPU_BLOCKS as u32;
 
-    unsafe {
-        launch!(kernel.render<<<blocks, threads, 0, stream>>>(params.as_device_ptr()))?;
-    }
-
-    // The kernel launch is asynchronous, so we wait for the kernel to finish executing
-    stream.synchronize()?;
-
-    gpu_byte_prefixes.copy_to(&mut byte_prefixes)?;
-
-    Ok(byte_prefixes.into_iter().filter_map(|prefix| {
-        let _gpu_prefix = unsafe { DeviceBuffer::from_raw_parts(prefix.byte_prefix, prefix.byte_prefix_len) };
-        let gpu_success = unsafe { DeviceBox::from_device(prefix.success) };
-        let gpu_out = unsafe { DeviceBuffer::from_raw_parts(prefix.out, 32) };
-        let mut success = false;
-        gpu_success.copy_to(&mut success).unwrap();
-        if success {
-            let mut out = [0; 32];
-            gpu_out.copy_to(&mut out).unwrap();
-            Some(out)
-        } else {
-            None
+    loop {
+        unsafe {
+            launch!(kernel.render<<<blocks, threads, 0, stream>>>(params.as_device_ptr()))?;
         }
-    }).collect())
-}
 
-pub fn byte_prefix_from_str(s: &str) -> core::BytePrefix {
-    let byte_prefix = base32::decode(
-        base32::Alphabet::RFC4648 { padding: false },
-        &format!("{}aa", s),
-    )
-    .expect("prefix must be base32");
-    let mut last_byte_idx = 5 * s.len() / 8 - 1;
-    let n_bits = (5 * s.len()) % 8;
-    let last_byte_mask = ((1 << n_bits) - 1) << (8 - n_bits);
-    if last_byte_mask > 0 {
-        last_byte_idx += 1;
+        // The kernel launch is asynchronous, so we wait for the kernel to finish executing
+        stream.synchronize()?;
+
+        gpu_byte_prefixes.copy_to(&mut byte_prefixes)?;
+
+        for prefix in &byte_prefixes_owned {
+            let mut success = false;
+            prefix.success.copy_to(&mut success)?;
+            if success {
+                let mut out = [0; 32];
+                prefix.out.copy_to(&mut out)?;
+                sender.send(out)?;
+            }
+        }
+
+        tries_sender.send(GPU_THREADS * GPU_BLOCKS)?;
     }
-    let mut gpu_byte_prefix = rustacuda::memory::DeviceBuffer::from_slice(&byte_prefix).unwrap();
-    let out = [0; 32];
-    let mut gpu_out = rustacuda::memory::DeviceBuffer::from_slice(&out).unwrap();
-
-    let success = false;
-    let gpu_success = rustacuda::memory::DeviceBox::new(&success).unwrap();
-    let res = core::BytePrefix {
-        byte_prefix: gpu_byte_prefix.as_device_ptr(),
-        byte_prefix_len: gpu_byte_prefix.len(),
-        last_byte_idx,
-        last_byte_mask,
-        out: gpu_out.as_device_ptr(),
-        success: rustacuda::memory::DeviceBox::into_device(gpu_success),
-    };
-    std::mem::forget(gpu_byte_prefix);
-    std::mem::forget(gpu_out);
-    res
 }
 
 const FILE_PREFIX: &'static [u8] = b"== ed25519v1-secret: type0 ==\0\0\0";
@@ -179,7 +197,11 @@ fn main() {
         .values_of("PREFIX")
         .unwrap()
         .fold(0, |acc, x| std::cmp::max(acc, x.len()));
-    let prefixes: Vec<_> = matches.values_of("PREFIX").unwrap().map(|a| a.to_string()).collect();
+    let prefixes: Vec<_> = matches
+        .values_of("PREFIX")
+        .unwrap()
+        .map(|a| a.to_string())
+        .collect();
     let dst = matches
         .value_of("dst")
         .map(PathBuf::from)
@@ -192,14 +214,8 @@ fn main() {
         use rand::RngCore;
         let mut seed = [0; 32];
         let mut csprng = rand::thread_rng();
-        loop {
-            csprng.fill_bytes(&mut seed);
-            let res = cuda_try(&seed, &prefixes).unwrap();
-            for seed in res {
-                send.send(seed).unwrap();
-            }
-            send_tries.send(GPU_BLOCKS * GPU_THREADS).unwrap();
-        }
+        csprng.fill_bytes(&mut seed);
+        cuda_try_loop(&seed, &prefixes, send, send_tries).unwrap();
     });
 
     std::thread::spawn(move || {
