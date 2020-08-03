@@ -1,5 +1,5 @@
 # tor-v3-vanity
-A TOR v3 vanity url generator designed to run on an nvidia GPU.
+A TOR v3 vanity url generator designed to run on an NVIDIA GPU.
 
 Disclaimer: This project is brand new and hasn't been thoroughly vetted.
 Please report any bugs you find [here](https://github.com/dr-bonez/tor-v3-vanity/issues).
@@ -11,6 +11,7 @@ I will make this configurable soon.
 
 - [Install Rust](https://rustup.rs)
 - [Install Cuda](https://developer.nvidia.com/cuda-downloads)
+- `rustup target add nvptx64-nvidia-cuda`
 - `cargo install ptx-linker`
 - `git clone https://github.com/dr-bonez/tor-v3-vanity`
 - `cd tor-v3-vanity`
