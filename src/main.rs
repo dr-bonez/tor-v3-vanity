@@ -127,6 +127,9 @@ pub fn cuda_try_loop(
             // Load PTX module
             let module_data = CString::new(include_str!(env!("KERNEL_PTX_PATH"))).unwrap();
             let kernel = Module::load_from_string(&module_data).unwrap();
+            let function = kernel
+                .get_function(std::ffi::CStr::from_bytes_with_nul(b"render\0").unwrap())
+                .unwrap();
 
             // Create a stream to submit work to
             let stream = Stream::new(StreamFlags::NON_BLOCKING, None).unwrap();
@@ -153,13 +156,32 @@ pub fn cuda_try_loop(
             })
             .unwrap();
 
-            // Do rendering
-            let threads = device
+            // calculate threads and blocks
+            let fn_max_threads = function
+                .get_attribute(rustacuda::function::FunctionAttribute::MaxThreadsPerBlock)
+                .unwrap() as u32;
+            let fn_registers = function
+                .get_attribute(rustacuda::function::FunctionAttribute::NumRegisters)
+                .unwrap() as u32;
+            let gpu_max_threads = device
                 .get_attribute(rustacuda::device::DeviceAttribute::MaxThreadsPerBlock)
                 .unwrap() as u32;
-            let blocks = device
+            let gpu_max_registers = device
+                .get_attribute(rustacuda::device::DeviceAttribute::MaxRegistersPerBlock)
+                .unwrap() as u32;
+            let gpu_cores = device
                 .get_attribute(rustacuda::device::DeviceAttribute::MultiprocessorCount)
                 .unwrap() as u32;
+
+            let threads = *[
+                fn_max_threads,
+                gpu_max_threads,
+                gpu_max_registers / fn_registers,
+            ]
+            .iter()
+            .min()
+            .unwrap();
+            let blocks = gpu_cores * gpu_max_threads / threads;
 
             loop {
                 csprng.fill_bytes(&mut seed);
