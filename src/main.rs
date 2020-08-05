@@ -255,6 +255,7 @@ fn main() {
 
     std::thread::spawn(move || {
         let now = Instant::now();
+        let mut last_log = Instant::now();
         let mut tries = 0_f64;
         let expected = 2_f64.powi(5 * max_len as i32);
         loop {
@@ -267,11 +268,14 @@ fn main() {
             let expected_dur_pretty = PrettyDur(
                 chrono::Duration::from_std(Duration::from_secs_f64(expected_dur)).unwrap(),
             );
-            println!("Tried {:.0} / {:.0} (expected) keys.", tries, expected);
-            println!(
-                "Running for {} / {} (expected).",
-                dur_pretty, expected_dur_pretty
-            );
+            if last_log.elapsed() > Duration::from_secs(30) {
+                println!("Tried {:.0} / {:.0} (expected) keys.", tries, expected);
+                println!(
+                    "Running for {} / {} (expected).",
+                    dur_pretty, expected_dur_pretty
+                );
+                last_log = Instant::now();
+            }
         }
     });
 
