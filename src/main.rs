@@ -112,6 +112,7 @@ pub fn cuda_try_loop(
     // Create a context associated to this device
     // TODO: keep alive
     rustacuda::init(CudaFlags::empty())?;
+    let mut i = 0;
     for device in rustacuda::device::Device::devices()? {
         let device = device?;
         let prefixes = prefixes.to_owned();
@@ -183,6 +184,11 @@ pub fn cuda_try_loop(
             .unwrap();
             let blocks = gpu_cores * gpu_max_threads / threads;
 
+            println!(
+                "Launching kernel on device #{} with {} threads and {} blocks",
+                i, threads, blocks
+            );
+
             loop {
                 csprng.fill_bytes(&mut seed);
                 gpu_seed.copy_from(&seed).unwrap();
@@ -210,6 +216,11 @@ pub fn cuda_try_loop(
                 tries_sender.send(threads as u64 * blocks as u64).unwrap();
             }
         });
+        i += 1;
+    }
+    if i == 0 {
+        eprintln!("No cuda devices available.");
+        std::process::exit(2);
     }
     Ok(())
 }
