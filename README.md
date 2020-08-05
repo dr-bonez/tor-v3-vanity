@@ -4,8 +4,7 @@ A TOR v3 vanity url generator designed to run on an NVIDIA GPU.
 Disclaimer: This project is brand new and hasn't been thoroughly vetted.
 Please report any bugs you find [here](https://github.com/dr-bonez/tor-v3-vanity/issues).
 
-For now, the program is designed to use a single GPU with a predefined number of threads and blocks.
-I will make this configurable soon.
+The program is designed to use all available cuda devices, and will automatically decide the number of threads and blocks to use.
 
 ## Installation
 

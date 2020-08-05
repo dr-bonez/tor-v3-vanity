@@ -6,9 +6,6 @@ use failure::Error;
 use sha3::{Digest, Sha3_256};
 use tor_v3_vanity_core as core;
 
-const GPU_THREADS: u64 = 256;
-const GPU_BLOCKS: u64 = 4096;
-
 pub struct Pubkey(pub [u8; 32]);
 impl AsRef<[u8; 32]> for Pubkey {
     fn as_ref(&self) -> &[u8; 32] {
@@ -98,8 +95,11 @@ impl BytePrefixOwned {
     }
 }
 
-pub fn cuda_try_loop<Rng: rand::Rng + rand::CryptoRng>(
-    csprng: &mut Rng,
+fn assert_crypto_rng<Rng: rand::CryptoRng>(rng: Rng) -> Rng {
+    rng
+}
+
+pub fn cuda_try_loop(
     prefixes: &[String],
     sender: crossbeam_channel::Sender<[u8; 32]>,
     tries_sender: crossbeam_channel::Sender<u64>,
@@ -112,69 +112,117 @@ pub fn cuda_try_loop<Rng: rand::Rng + rand::CryptoRng>(
     // Create a context associated to this device
     // TODO: keep alive
     rustacuda::init(CudaFlags::empty())?;
-    let device = Device::get_device(0)?;
-    let _context =
-        Context::create_and_push(ContextFlags::MAP_HOST | ContextFlags::SCHED_AUTO, device)?;
+    let mut i = 0;
+    for device in rustacuda::device::Device::devices()? {
+        let device = device?;
+        let prefixes = prefixes.to_owned();
+        let sender = sender.clone();
+        let tries_sender = tries_sender.clone();
+        std::thread::spawn(move || {
+            use rand::RngCore;
+            let mut csprng = assert_crypto_rng(rand::thread_rng());
+            let _context =
+                Context::create_and_push(ContextFlags::MAP_HOST | ContextFlags::SCHED_AUTO, device)
+                    .unwrap();
 
-    // Load PTX module
-    let module_data = CString::new(include_str!(env!("KERNEL_PTX_PATH")))?;
-    let kernel = Module::load_from_string(&module_data)?;
+            // Load PTX module
+            let module_data = CString::new(include_str!(env!("KERNEL_PTX_PATH"))).unwrap();
+            let kernel = Module::load_from_string(&module_data).unwrap();
+            let function = kernel
+                .get_function(std::ffi::CStr::from_bytes_with_nul(b"render\0").unwrap())
+                .unwrap();
 
-    // Create a stream to submit work to
-    let stream = Stream::new(StreamFlags::NON_BLOCKING, None)?;
+            // Create a stream to submit work to
+            let stream = Stream::new(StreamFlags::NON_BLOCKING, None).unwrap();
 
-    // Move seed and prefix to device
-    let mut seed = [0; 32];
-    let mut gpu_seed = DeviceBuffer::from_slice(&seed)?;
+            // Move seed and prefix to device
+            let mut seed = [0; 32];
+            let mut gpu_seed = DeviceBuffer::from_slice(&seed).unwrap();
 
-    let mut byte_prefixes_owned: Vec<_> = prefixes
-        .into_iter()
-        .map(|a| BytePrefixOwned::from_str(&a))
-        .collect();
-    let mut byte_prefixes: Vec<_> = byte_prefixes_owned
-        .iter_mut()
-        .map(|bp| bp.as_byte_prefix())
-        .collect();
-    let mut gpu_byte_prefixes = DeviceBuffer::from_slice(&byte_prefixes)?;
+            let mut byte_prefixes_owned: Vec<_> = prefixes
+                .into_iter()
+                .map(|a| BytePrefixOwned::from_str(&a))
+                .collect();
+            let mut byte_prefixes: Vec<_> = byte_prefixes_owned
+                .iter_mut()
+                .map(|bp| bp.as_byte_prefix())
+                .collect();
+            let mut gpu_byte_prefixes = DeviceBuffer::from_slice(&byte_prefixes).unwrap();
 
-    // Create output
+            // Crate parameters
+            let mut params = DeviceBox::new(&core::KernelParams {
+                seed: gpu_seed.as_device_ptr(),
+                byte_prefixes: gpu_byte_prefixes.as_device_ptr(),
+                byte_prefixes_len: gpu_byte_prefixes.len(),
+            })
+            .unwrap();
 
-    // Crate parameters
-    let mut params = DeviceBox::new(&core::KernelParams {
-        seed: gpu_seed.as_device_ptr(),
-        byte_prefixes: gpu_byte_prefixes.as_device_ptr(),
-        byte_prefixes_len: gpu_byte_prefixes.len(),
-    })?;
+            // calculate threads and blocks
+            let fn_max_threads = function
+                .get_attribute(rustacuda::function::FunctionAttribute::MaxThreadsPerBlock)
+                .unwrap() as u32;
+            let fn_registers = function
+                .get_attribute(rustacuda::function::FunctionAttribute::NumRegisters)
+                .unwrap() as u32;
+            let gpu_max_threads = device
+                .get_attribute(rustacuda::device::DeviceAttribute::MaxThreadsPerBlock)
+                .unwrap() as u32;
+            let gpu_max_registers = device
+                .get_attribute(rustacuda::device::DeviceAttribute::MaxRegistersPerBlock)
+                .unwrap() as u32;
+            let gpu_cores = device
+                .get_attribute(rustacuda::device::DeviceAttribute::MultiprocessorCount)
+                .unwrap() as u32;
 
-    // Do rendering
-    let threads = GPU_THREADS as u32;
-    let blocks = GPU_BLOCKS as u32;
+            let threads = *[
+                fn_max_threads,
+                gpu_max_threads,
+                gpu_max_registers / fn_registers,
+            ]
+            .iter()
+            .min()
+            .unwrap();
+            let blocks = gpu_cores * gpu_max_threads / threads;
 
-    loop {
-        csprng.fill_bytes(&mut seed);
-        gpu_seed.copy_from(&seed)?;
-        unsafe {
-            launch!(kernel.render<<<blocks, threads, 0, stream>>>(params.as_device_ptr()))?;
-        }
+            println!(
+                "Launching kernel on device #{} with {} threads and {} blocks",
+                i, threads, blocks
+            );
 
-        // The kernel launch is asynchronous, so we wait for the kernel to finish executing
-        stream.synchronize()?;
+            loop {
+                csprng.fill_bytes(&mut seed);
+                gpu_seed.copy_from(&seed).unwrap();
+                unsafe {
+                    launch!(kernel.render<<<blocks, threads, 0, stream>>>(params.as_device_ptr()))
+                        .unwrap();
+                }
 
-        gpu_byte_prefixes.copy_to(&mut byte_prefixes)?;
+                // The kernel launch is asynchronous, so we wait for the kernel to finish executing
+                stream.synchronize().unwrap();
 
-        for prefix in &mut byte_prefixes_owned {
-            let mut success = false;
-            prefix.success.copy_to(&mut success)?;
-            if success {
-                prefix.success.copy_from(&false)?;
-                let mut out = [0; 32];
-                prefix.out.copy_to(&mut out)?;
-                sender.send(out)?;
+                gpu_byte_prefixes.copy_to(&mut byte_prefixes).unwrap();
+
+                for prefix in &mut byte_prefixes_owned {
+                    let mut success = false;
+                    prefix.success.copy_to(&mut success).unwrap();
+                    if success {
+                        prefix.success.copy_from(&false).unwrap();
+                        let mut out = [0; 32];
+                        prefix.out.copy_to(&mut out).unwrap();
+                        sender.send(out).unwrap();
+                    }
+                }
+
+                tries_sender.send(threads as u64 * blocks as u64).unwrap();
             }
-        }
-
-        tries_sender.send(GPU_THREADS * GPU_BLOCKS)?;
+        });
+        i += 1;
     }
+    if i == 0 {
+        eprintln!("No cuda devices available.");
+        std::process::exit(2);
+    }
+    Ok(())
 }
 
 const FILE_PREFIX: &'static [u8] = b"== ed25519v1-secret: type0 ==\0\0\0";
@@ -214,13 +262,11 @@ fn main() {
 
     let (send, recv) = crossbeam_channel::unbounded();
     let (send_tries, recv_tries) = crossbeam_channel::bounded(1);
-    std::thread::spawn(move || {
-        let mut csprng = rand::thread_rng();
-        cuda_try_loop(&mut csprng, &prefixes, send, send_tries).unwrap();
-    });
+    cuda_try_loop(&prefixes, send, send_tries).unwrap();
 
     std::thread::spawn(move || {
         let now = Instant::now();
+        let mut last_log = Instant::now();
         let mut tries = 0_f64;
         let expected = 2_f64.powi(5 * max_len as i32);
         loop {
@@ -233,11 +279,14 @@ fn main() {
             let expected_dur_pretty = PrettyDur(
                 chrono::Duration::from_std(Duration::from_secs_f64(expected_dur)).unwrap(),
             );
-            println!("Tried {:.0} / {:.0} (expected) keys.", tries, expected);
-            println!(
-                "Running for {} / {} (expected).",
-                dur_pretty, expected_dur_pretty
-            );
+            if last_log.elapsed() > Duration::from_secs(30) {
+                println!("Tried {:.0} / {:.0} (expected) keys.", tries, expected);
+                println!(
+                    "Running for {} / {} (expected).",
+                    dur_pretty, expected_dur_pretty
+                );
+                last_log = Instant::now();
+            }
         }
     });
 
