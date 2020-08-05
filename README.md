@@ -6,6 +6,8 @@ Please report any bugs you find [here](https://github.com/dr-bonez/tor-v3-vanity
 
 The program is designed to use all available cuda devices, and will automatically decide the number of threads and blocks to use.
 
+Now supports multiple prefixes!
+
 ## Installation
 
 - [Install Rust](https://rustup.rs)
@@ -21,16 +23,17 @@ The program is designed to use all available cuda devices, and will automaticall
 - Create output dir
   - `mkdir mykeys`
 - Run `t3v`
-  - `t3v --dst mykeys/ myprefix`
+  - `t3v --dst mykeys/ myprefix1,myprefix2`
 - Use the resulting file as your `hs_ed25519_secret_key`
   - `cat mykeys/myprefixwhatever.onion > /var/lib/tor/hidden_service/hs_ed25519_secret_key`
 
 ## Bench
 On my 1070ti, I get the following time estimates:
 
-| Prefix Length | Time      |
-| ------------- | --------- |
-|             5 | 7 minutes |
-|             6 | 3.5 hours |
-|             7 | 5.5 days  |
-|             8 | 23 weeks  |
+| Prefix Length | Time       |
+| ------------- | ---------- |
+|             5 | 7 minutes  |
+|             6 | 3.5 hours  |
+|             7 | 5 days     |
+|             8 | 22.5 weeks |
+|             9 | 14 years   |
