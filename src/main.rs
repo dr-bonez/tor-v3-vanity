@@ -95,8 +95,11 @@ impl BytePrefixOwned {
     }
 }
 
-pub fn cuda_try_loop<Rng: rand::Rng + rand::CryptoRng>(
-    csprng: &mut Rng,
+fn assert_crypto_rng<Rng: rand::CryptoRng>(rng: Rng) -> Rng {
+    rng
+}
+
+pub fn cuda_try_loop(
     prefixes: &[String],
     sender: crossbeam_channel::Sender<[u8; 32]>,
     tries_sender: crossbeam_channel::Sender<u64>,
@@ -111,7 +114,12 @@ pub fn cuda_try_loop<Rng: rand::Rng + rand::CryptoRng>(
     rustacuda::init(CudaFlags::empty())?;
     for device in rustacuda::device::Device::devices()? {
         let device = device?;
+        let prefixes = prefixes.to_owned();
+        let sender = sender.clone();
+        let tries_sender = tries_sender.clone();
         std::thread::spawn(move || {
+            use rand::RngCore;
+            let mut csprng = assert_crypto_rng(rand::thread_rng());
             let _context =
                 Context::create_and_push(ContextFlags::MAP_HOST | ContextFlags::SCHED_AUTO, device)
                     .unwrap();
@@ -148,10 +156,10 @@ pub fn cuda_try_loop<Rng: rand::Rng + rand::CryptoRng>(
             // Do rendering
             let threads = device
                 .get_attribute(rustacuda::device::DeviceAttribute::MaxThreadsPerBlock)
-                .unwrap();
+                .unwrap() as u32;
             let blocks = device
                 .get_attribute(rustacuda::device::DeviceAttribute::MultiprocessorCount)
-                .unwrap();
+                .unwrap() as u32;
 
             loop {
                 csprng.fill_bytes(&mut seed);
@@ -221,11 +229,7 @@ fn main() {
 
     let (send, recv) = crossbeam_channel::unbounded();
     let (send_tries, recv_tries) = crossbeam_channel::bounded(1);
-    {
-        // run gpu compute
-        let mut csprng = rand::thread_rng();
-        cuda_try_loop(&mut csprng, &prefixes, send, send_tries).unwrap();
-    }
+    cuda_try_loop(&prefixes, send, send_tries).unwrap();
 
     std::thread::spawn(move || {
         let now = Instant::now();
