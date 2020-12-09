@@ -12,11 +12,12 @@ Now supports multiple prefixes!
 
 - [Install Rust](https://rustup.rs)
 - [Install Cuda](https://developer.nvidia.com/cuda-downloads)
+- `rustup install nightly`
 - `rustup target add nvptx64-nvidia-cuda`
 - `cargo install ptx-linker`
 - `git clone https://github.com/dr-bonez/tor-v3-vanity`
 - `cd tor-v3-vanity`
-- `cargo install --path .`
+- `cargo +nightly install --path .`
 
 ## Usage
 
