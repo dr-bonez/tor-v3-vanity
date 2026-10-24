@@ -29,12 +29,14 @@ Now supports multiple prefixes!
   - `cat mykeys/myprefixwhatever.onion > /var/lib/tor/hidden_service/hs_ed25519_secret_key`
 
 ## Bench
-On my 1070ti, I get the following time estimates:
+Measure your GPU with `t3v --bench 15`. An RTX 5090 checks about 3.97 Gkeys/s, which gives
+the following expected times per match:
 
-| Prefix Length | Time       |
-| ------------- | ---------- |
-|             5 | 7 minutes  |
-|             6 | 3.5 hours  |
-|             7 | 5 days     |
-|             8 | 22.5 weeks |
-|             9 | 14 years   |
+| Prefix Length | Time        |
+| ------------- | ----------- |
+|             7 | 9 seconds   |
+|             8 | 4.6 minutes |
+|             9 | 2.5 hours   |
+|            10 | 3.3 days    |
+|            11 | 15 weeks    |
+|            12 | 9.2 years   |
