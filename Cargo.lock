@@ -236,12 +236,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ed25519-compact"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15ff59c21c001545343f55cf65a83c6983b77f6ba99724309700c621f2890a59"
-
-[[package]]
 name = "ed25519-dalek"
 version = "1.0.0-pre.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -689,8 +683,6 @@ dependencies = [
 name = "tor-v3-vanity-core"
 version = "0.1.0"
 dependencies = [
- "byteorder",
- "ed25519-compact",
  "rustacuda_core",
  "rustacuda_derive",
 ]
