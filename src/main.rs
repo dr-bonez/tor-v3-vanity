@@ -35,6 +35,21 @@ impl std::fmt::Display for PrettyDur {
     }
 }
 
+pub struct PrettyRate(f64);
+impl std::fmt::Display for PrettyRate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0 >= 1e9 {
+            write!(f, "{:.3} Gkeys/s", self.0 / 1e9)
+        } else if self.0 >= 1e6 {
+            write!(f, "{:.3} Mkeys/s", self.0 / 1e6)
+        } else if self.0 >= 1e3 {
+            write!(f, "{:.3} Kkeys/s", self.0 / 1e3)
+        } else {
+            write!(f, "{:.0} keys/s", self.0)
+        }
+    }
+}
+
 pub fn pubkey_to_onion(pubkey: &[u8; 32]) -> String {
     let mut hasher = Sha3_256::new();
     hasher.update(b".onion checksum");
@@ -231,7 +246,7 @@ fn main() {
     let app = clap::App::new("t3v")
         .arg(
             clap::Arg::with_name("PREFIX")
-                .required(true)
+                .required_unless("bench")
                 .multiple(true)
                 .value_delimiter(",")
                 .help("Desired prefix"),
@@ -242,18 +257,28 @@ fn main() {
                 .short("d")
                 .takes_value(true)
                 .help("Destination folder"),
+        )
+        .arg(
+            clap::Arg::with_name("bench")
+                .long("bench")
+                .takes_value(true)
+                .value_name("SECONDS")
+                .help("Measure the key generation rate for SECONDS and exit"),
         );
     let matches = app.get_matches();
 
-    let max_len = matches
-        .values_of("PREFIX")
-        .unwrap()
+    let bench = matches.value_of("bench").map(|s| {
+        s.parse::<f64>()
+            .expect("bench must be a number of seconds")
+    });
+    let prefixes: Vec<_> = match matches.values_of("PREFIX") {
+        Some(values) => values.map(|a| a.to_string()).collect(),
+        // 80 bits that will never match, so the benchmark measures pure throughput
+        None => vec!["a".repeat(16)],
+    };
+    let max_len = prefixes
+        .iter()
         .fold(0, |acc, x| std::cmp::max(acc, x.len()));
-    let prefixes: Vec<_> = matches
-        .values_of("PREFIX")
-        .unwrap()
-        .map(|a| a.to_string())
-        .collect();
     let dst = matches
         .value_of("dst")
         .map(PathBuf::from)
@@ -266,11 +291,31 @@ fn main() {
 
     std::thread::spawn(move || {
         let now = Instant::now();
-        let mut last_log = Instant::now();
-        let mut tries = 0_f64;
         let expected = 2_f64.powi(5 * max_len as i32);
+        // The first batch includes kernel warm-up, so rates are measured from its completion
+        let mut tries = recv_tries.recv().unwrap() as f64;
+        let rate_start = Instant::now();
+        let rate_start_tries = tries;
+        let mut last_log = Instant::now();
+        let mut last_log_tries = tries;
         loop {
             tries += recv_tries.recv().unwrap() as f64;
+            if let Some(secs) = bench {
+                let elapsed = rate_start.elapsed().as_secs_f64();
+                if elapsed >= secs {
+                    let measured = tries - rate_start_tries;
+                    let rate = measured / elapsed;
+                    println!(
+                        "Benchmark: {:.0} keys in {:.2}s = {} ({:.0} keys/s)",
+                        measured,
+                        elapsed,
+                        PrettyRate(rate),
+                        rate
+                    );
+                    std::process::exit(0);
+                }
+                continue;
+            }
             let dur = now.elapsed().as_secs_f64();
             let dur_pretty =
                 PrettyDur(chrono::Duration::from_std(Duration::from_secs_f64(dur)).unwrap());
@@ -285,7 +330,15 @@ fn main() {
                     "Running for {} / {} (expected).",
                     dur_pretty, expected_dur_pretty
                 );
+                let window = last_log.elapsed().as_secs_f64();
+                println!(
+                    "Rate: {} (last {:.0}s), {} (average).",
+                    PrettyRate((tries - last_log_tries) / window),
+                    window,
+                    PrettyRate((tries - rate_start_tries) / rate_start.elapsed().as_secs_f64())
+                );
                 last_log = Instant::now();
+                last_log_tries = tries;
             }
         }
     });
